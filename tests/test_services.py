@@ -2,7 +2,14 @@ from openpyxl import Workbook
 
 from excel_matcher.config import Settings
 from excel_matcher.matcher.fusion_matcher import FusionMatcher
-from excel_matcher.models import ColumnProfile, DataType, StageStatus, StandardField
+from excel_matcher.models import (
+    ColumnProfile,
+    DataType,
+    FieldMatchCandidate,
+    StageResult,
+    StageStatus,
+    StandardField,
+)
 from excel_matcher.services.matching_service import match_profiles
 from excel_matcher.services.template_service import (
     build_template_signature,
@@ -134,3 +141,63 @@ def test_template_similarity_scores_identical_structure_high():
     signature = build_template_signature("订单", profiles)
 
     assert template_similarity(signature, signature) == 1.0
+
+
+class FakeEmbeddingMatcher:
+    def match(self, profile):
+        return StageResult(
+            stage="embedding",
+            status=StageStatus.COMPLETED,
+            candidates=[
+                FieldMatchCandidate(
+                    target_field="customer_name",
+                    score=0.91,
+                    source="embedding",
+                )
+            ],
+        )
+
+
+class FakeLLMMatcher:
+    def match(self, profile, candidates):
+        assert profile.samples == ["腾讯"]
+        assert candidates[0].target_field == "customer_name"
+        return StageResult(
+            stage="llm",
+            status=StageStatus.COMPLETED,
+            candidates=[
+                FieldMatchCandidate(
+                    target_field="customer_name",
+                    score=0.96,
+                    source="llm",
+                )
+            ],
+        )
+
+
+def test_phase2_fusion_calls_embedding_then_llm_with_profile_samples():
+    matcher = FusionMatcher(
+        standard_fields=FIELDS,
+        enable_embedding=True,
+        enable_llm=True,
+        embedding_matcher=FakeEmbeddingMatcher(),
+        llm_matcher=FakeLLMMatcher(),
+    )
+    profile = ColumnProfile(
+        column_name="购货单位",
+        column_index=1,
+        data_type=DataType.TEXT,
+        samples=["腾讯"],
+    )
+
+    result = matcher.match(profile)
+
+    assert [stage.stage for stage in result.stage_results] == [
+        "exact",
+        "dictionary",
+        "rapidfuzz",
+        "embedding",
+        "llm",
+    ]
+    assert result.target_field == "customer_name"
+    assert result.confidence == 0.96
