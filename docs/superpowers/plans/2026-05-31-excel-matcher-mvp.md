@@ -2,17 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the full local Excel intelligent business matching MVP from `milestone_1.md`, including parsing, header detection, profiling, dictionary storage, staged matching, template learning, Streamlit, FastAPI, generated validation samples, and `pytest` verification.
+**Goal:** Build the full local Excel intelligent business matching MVP from `milestone_1.md` in two phases: Phase 1 validates the deterministic workflow without Embedding/LLM or data-content semantic evaluation; Phase 2 adds Embedding/FAISS, `codex exec`, and data-content semantic scoring.
 
-**Architecture:** Build a thin-entry layered Python package. Core Pydantic models and services hold all business behavior; Streamlit and FastAPI call the same services. Matching runs the fixed stage order `Exact -> Dictionary -> RapidFuzz -> Embedding/FAISS -> LLM`, with per-stage diagnostics and skip reasons.
+**Architecture:** Build a thin-entry layered Python package. Core Pydantic models and services hold all business behavior; Streamlit and FastAPI call the same services. Phase 1 runs `Exact -> Dictionary -> RapidFuzz` and records Embedding/LLM as disabled semantic stages; Phase 2 upgrades the same service path to the full `Exact -> Dictionary -> RapidFuzz -> Embedding/FAISS -> LLM` chain, including field-name and data-sample semantic signals.
 
-**Tech Stack:** Python 3.11+, Pydantic v2, openpyxl, pandas, RapidFuzz, sentence-transformers, FAISS, SQLite, FastAPI, Streamlit, pytest.
+**Tech Stack:** Python 3.11+, Pydantic v2, openpyxl, pandas, RapidFuzz, SQLite, FastAPI, Streamlit, pytest. Phase 2 adds sentence-transformers, FAISS, and `codex exec`.
 
 ---
 
 ## Scope Check
 
 This is a broad MVP, but the subsystems are coupled by one vertical workflow: upload workbook, analyze sheets, match fields, confirm mappings, and learn templates. Keep it as one plan, split into independently reviewable tasks with commits after each task.
+
+Phase boundaries:
+
+- **Phase 1: Deterministic initial validation.** Implement parsing, header detection, column profiling, SQLite dictionary, exact/dictionary/RapidFuzz matching, template learning, generated samples, Streamlit, FastAPI, and accuracy tests. Do not load or call Embedding models, FAISS, `codex exec`, or any semantic scoring based on data content. UI/API must show Embedding and LLM stages as disabled or skipped when reporting the full stage list.
+- **Phase 2: Semantic enhancement.** Add Embedding/FAISS and LLM stages. At this point, field profiles may include sample values in semantic text and prompts so the system can evaluate business meaning from both field names and data content.
 
 ## Target File Structure
 
@@ -32,17 +37,21 @@ This is a broad MVP, but the subsystems are coupled by one vertical workflow: up
 - Create: `excel_matcher/matcher/exact_matcher.py` exact matcher.
 - Create: `excel_matcher/matcher/dictionary_matcher.py` dictionary matcher.
 - Create: `excel_matcher/matcher/fuzzy_matcher.py` RapidFuzz matcher.
-- Create: `excel_matcher/vector/faiss_store.py` embedding model and FAISS index wrapper.
-- Create: `excel_matcher/matcher/embedding_matcher.py` Embedding/FAISS stage adapter.
-- Create: `excel_matcher/matcher/llm_matcher.py` `codex exec` semantic scoring stage.
-- Create: `excel_matcher/matcher/fusion_matcher.py` staged matcher and confidence fusion.
+- Create in Phase 2: `excel_matcher/vector/faiss_store.py` embedding model and FAISS index wrapper.
+- Create in Phase 2: `excel_matcher/matcher/embedding_matcher.py` Embedding/FAISS stage adapter.
+- Create in Phase 2: `excel_matcher/matcher/llm_matcher.py` `codex exec` semantic scoring stage.
+- Create: `excel_matcher/matcher/fusion_matcher.py` staged matcher and confidence fusion. Phase 1 records semantic stages as skipped; Phase 2 calls real semantic matchers.
 - Create: `excel_matcher/services/workbook_service.py` workbook analysis service.
 - Create: `excel_matcher/services/matching_service.py` matching orchestration service.
 - Create: `excel_matcher/services/template_service.py` template signature, save, and reuse service.
 - Create: `excel_matcher/api/app.py` FastAPI app.
 - Create: `excel_matcher/ui/streamlit_app.py` Streamlit UI.
 - Create: `tests/sample_generator.py` deterministic validation workbook generator.
-- Create: `tests/test_models.py`, `tests/test_parser.py`, `tests/test_header_detector.py`, `tests/test_profiler.py`, `tests/test_storage.py`, `tests/test_matchers.py`, `tests/test_vector_and_llm_skip.py`, `tests/test_services.py`, `tests/test_sample_accuracy.py`, and `tests/test_api.py`.
+- Create: `tests/test_models.py`, `tests/test_parser.py`, `tests/test_header_detector.py`, `tests/test_profiler.py`, `tests/test_storage.py`, `tests/test_matchers.py`, `tests/test_services.py`, `tests/test_sample_accuracy.py`, `tests/test_api.py`, and `tests/test_semantic_stages.py`.
+
+## Phase 1: Deterministic Initial Validation
+
+Phase 1 must not import, load, or call sentence-transformers, FAISS, `codex exec`, or LLM providers during the main analysis path. Field matching in this phase uses field names only, through exact matching, SQLite dictionary aliases, and RapidFuzz.
 
 ## Task 1: Project Scaffolding
 
@@ -71,13 +80,15 @@ dependencies = [
   "pydantic>=2.8.0",
   "python-multipart>=0.0.9",
   "rapidfuzz>=3.9.0",
-  "sentence-transformers>=3.0.0",
   "streamlit>=1.36.0",
   "uvicorn>=0.30.0",
 ]
 
 [project.optional-dependencies]
-faiss = ["faiss-cpu>=1.8.0"]
+semantic = [
+  "faiss-cpu>=1.8.0",
+  "sentence-transformers>=3.0.0",
+]
 test = ["pytest>=8.2.0"]
 
 [tool.pytest.ini_options]
@@ -108,7 +119,13 @@ Create `README.md`:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[test,faiss]"
+pip install -e ".[test]"
+```
+
+Phase 2 semantic dependencies:
+
+```bash
+pip install -e ".[test,semantic]"
 ```
 
 ## Test
@@ -269,7 +286,8 @@ class Settings(BaseModel):
     faiss_metadata_path: Path = Field(default=Path("data/faiss/metadata.json"))
     embedding_model_name: str = "BAAI/bge-small-zh-v1.5"
     embedding_top_k: int = 5
-    enable_llm: bool = True
+    enable_embedding: bool = False
+    enable_llm: bool = False
     llm_timeout_seconds: int = 60
     review_threshold: float = 0.75
     close_candidate_delta: float = 0.08
@@ -1160,122 +1178,7 @@ git add excel_matcher/matcher tests/test_matchers.py
 git commit -m "feat: add text matching stages"
 ```
 
-## Task 8: Embedding And FAISS Stage With Skip Behavior
-
-**Files:**
-- Create: `excel_matcher/vector/__init__.py`
-- Create: `excel_matcher/vector/faiss_store.py`
-- Create: `excel_matcher/matcher/embedding_matcher.py`
-- Create: `tests/test_vector_and_llm_skip.py`
-
-- [ ] **Step 1: Write embedding skip tests**
-
-Create the embedding portion of `tests/test_vector_and_llm_skip.py`:
-
-```python
-from excel_matcher.matcher.embedding_matcher import EmbeddingMatcher
-from excel_matcher.models import StageStatus, StandardField
-
-
-def test_embedding_matcher_skips_when_vector_store_unavailable():
-    fields = [StandardField(key="customer_name", display_name="客户名称", domain="order", aliases=["购买方"])]
-    matcher = EmbeddingMatcher(fields=fields, vector_store=None)
-
-    result = matcher.match("购买方")
-
-    assert result.status == StageStatus.SKIPPED
-    assert "vector store" in result.reason.lower()
-    assert result.candidates == []
-```
-
-- [ ] **Step 2: Run embedding skip test to verify failure**
-
-Run: `pytest tests/test_vector_and_llm_skip.py::test_embedding_matcher_skips_when_vector_store_unavailable -q`
-
-Expected: FAIL because `EmbeddingMatcher` does not exist.
-
-- [ ] **Step 3: Implement FAISS wrapper and embedding matcher**
-
-Create `excel_matcher/vector/faiss_store.py` with `FaissVectorStore` methods `build(fields)`, `save()`, `load()`, `is_available()`, and `query(text, top_k)`. Import `faiss` and `sentence_transformers` inside methods so tests can run without installed optional packages. Create `excel_matcher/matcher/embedding_matcher.py` so `vector_store=None` returns `StageResult(stage="embedding", status=skipped, reason="vector store is not available")`; otherwise query TopK and return normalized candidates.
-
-- [ ] **Step 4: Run embedding skip test**
-
-Run: `pytest tests/test_vector_and_llm_skip.py::test_embedding_matcher_skips_when_vector_store_unavailable -q`
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit embedding stage**
-
-```bash
-git add excel_matcher/vector excel_matcher/matcher/embedding_matcher.py tests/test_vector_and_llm_skip.py
-git commit -m "feat: add embedding matcher skip behavior"
-```
-
-## Task 9: LLM Semantic Scoring Stage
-
-**Files:**
-- Create: `excel_matcher/matcher/llm_matcher.py`
-- Modify: `tests/test_vector_and_llm_skip.py`
-
-- [ ] **Step 1: Add LLM tests**
-
-Append to `tests/test_vector_and_llm_skip.py`:
-
-```python
-from excel_matcher.matcher.llm_matcher import CodexExecLLMMatcher
-from excel_matcher.models import ColumnProfile, DataType, FieldMatchCandidate
-
-
-def test_llm_matcher_skips_without_candidates():
-    matcher = CodexExecLLMMatcher(enabled=True)
-    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
-
-    result = matcher.match(profile, candidates=[])
-
-    assert result.status == StageStatus.SKIPPED
-    assert "candidate" in result.reason.lower()
-
-
-def test_llm_matcher_parses_json_from_runner():
-    def runner(prompt: str, timeout: int) -> str:
-        assert "购买方" in prompt
-        return '{"target_field":"customer_name","semantic_score":0.96,"reason":"购买方表示客户"}'
-
-    matcher = CodexExecLLMMatcher(enabled=True, runner=runner, timeout_seconds=5)
-    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
-    candidates = [FieldMatchCandidate(target_field="customer_name", score=0.88, source="embedding")]
-
-    result = matcher.match(profile, candidates=candidates)
-
-    assert result.status == StageStatus.COMPLETED
-    assert result.candidates[0].target_field == "customer_name"
-    assert result.candidates[0].score == 0.96
-```
-
-- [ ] **Step 2: Run LLM tests to verify failure**
-
-Run: `pytest tests/test_vector_and_llm_skip.py -q`
-
-Expected: FAIL because `CodexExecLLMMatcher` does not exist.
-
-- [ ] **Step 3: Implement LLM matcher**
-
-Create `excel_matcher/matcher/llm_matcher.py`. The class `CodexExecLLMMatcher` accepts `enabled`, `timeout_seconds`, and an injectable `runner`. If disabled, return skipped with reason `llm scoring is disabled`. If no candidates are passed, return skipped with reason `llm scoring requires candidates`. The default runner calls `subprocess.run(["codex", "exec", prompt], capture_output=True, text=True, timeout=timeout_seconds, check=False)`. Parse JSON from stdout, require `target_field` and `semantic_score`, clamp score to `0.0-1.0`, and return `StageResult(stage="llm", status=completed)`. Invalid JSON, timeout, or non-zero exit returns skipped with a specific reason.
-
-- [ ] **Step 4: Run LLM tests**
-
-Run: `pytest tests/test_vector_and_llm_skip.py -q`
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit LLM scorer**
-
-```bash
-git add excel_matcher/matcher/llm_matcher.py tests/test_vector_and_llm_skip.py
-git commit -m "feat: add codex exec semantic scorer"
-```
-
-## Task 10: Fusion Matcher And Matching Service
+## Task 8: Phase 1 Fusion Matcher And Matching Service
 
 **Files:**
 - Create: `excel_matcher/matcher/fusion_matcher.py`
@@ -1283,7 +1186,7 @@ git commit -m "feat: add codex exec semantic scorer"
 - Create: `excel_matcher/services/matching_service.py`
 - Create: `tests/test_services.py`
 
-- [ ] **Step 1: Write fusion and service tests**
+- [ ] **Step 1: Write Phase 1 fusion and service tests**
 
 Create `tests/test_services.py`:
 
@@ -1299,8 +1202,8 @@ FIELDS = [
 ]
 
 
-def test_fusion_runs_stages_in_fixed_order_and_keeps_skip_reason():
-    matcher = FusionMatcher(standard_fields=FIELDS, vector_store=None, enable_llm=True)
+def test_phase1_fusion_runs_deterministic_stages_and_marks_semantic_disabled():
+    matcher = FusionMatcher(standard_fields=FIELDS, enable_embedding=False, enable_llm=False)
     profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
 
     result = matcher.match(profile)
@@ -1309,8 +1212,19 @@ def test_fusion_runs_stages_in_fixed_order_and_keeps_skip_reason():
     assert result.target_field == "customer_name"
     assert result.confidence >= 0.95
     embedding = next(stage for stage in result.stage_results if stage.stage == "embedding")
+    llm = next(stage for stage in result.stage_results if stage.stage == "llm")
     assert embedding.status == StageStatus.SKIPPED
-    assert embedding.reason
+    assert embedding.reason == "embedding semantic scoring is disabled in phase 1"
+    assert llm.status == StageStatus.SKIPPED
+    assert llm.reason == "llm semantic scoring is disabled in phase 1"
+
+
+def test_phase1_matching_does_not_use_data_content_semantics():
+    matcher = FusionMatcher(standard_fields=FIELDS, enable_embedding=False, enable_llm=False)
+    first = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
+    second = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["完全不同的样例值"])
+
+    assert matcher.match(first).target_field == matcher.match(second).target_field == "customer_name"
 
 
 def test_match_profiles_returns_one_mapping_per_profile():
@@ -1319,22 +1233,30 @@ def test_match_profiles_returns_one_mapping_per_profile():
         ColumnProfile(column_name="订单金额", column_index=2, data_type=DataType.NUMBER, samples=[1000]),
     ]
 
-    results = match_profiles(profiles, standard_fields=FIELDS, vector_store=None, enable_llm=False)
+    results = match_profiles(profiles, standard_fields=FIELDS, enable_embedding=False, enable_llm=False)
 
     assert [result.target_field for result in results] == ["customer_name", "amount"]
 ```
 
-- [ ] **Step 2: Run fusion tests to verify failure**
+- [ ] **Step 2: Run Phase 1 fusion tests to verify failure**
 
 Run: `pytest tests/test_services.py -q`
 
 Expected: FAIL because `FusionMatcher` and `match_profiles` do not exist.
 
-- [ ] **Step 3: Implement fusion matcher**
+- [ ] **Step 3: Implement Phase 1 fusion matcher**
 
-Create `excel_matcher/matcher/fusion_matcher.py`. The matcher must always append stage results in this order: `exact`, `dictionary`, `rapidfuzz`, `embedding`, `llm`. Use exact and dictionary score `1.0` and confidence `0.98`; use RapidFuzz, embedding, and LLM scores directly after normalization. Pick the highest-priority candidate by sorting with priority `exact=5`, `dictionary=4`, `llm=3`, `embedding=2`, `rapidfuzz=1`, then score. Set `needs_review` when confidence is below settings threshold or top two final candidates differ by less than settings close delta.
+Create `excel_matcher/matcher/fusion_matcher.py`. In Phase 1, `FusionMatcher.__init__` must accept `standard_fields`, `enable_embedding=False`, `enable_llm=False`, and optional `settings`. `FusionMatcher.match(profile)` must call exact, dictionary, and RapidFuzz matchers using `profile.column_name`; it must not inspect `profile.samples` except to pass the untouched profile into the result if needed. Always append five stage results in this order: `exact`, `dictionary`, `rapidfuzz`, `embedding`, `llm`. When `enable_embedding=False`, append `StageResult(stage="embedding", status=StageStatus.SKIPPED, reason="embedding semantic scoring is disabled in phase 1")`. When `enable_llm=False`, append `StageResult(stage="llm", status=StageStatus.SKIPPED, reason="llm semantic scoring is disabled in phase 1")`.
 
-- [ ] **Step 4: Implement matching service**
+Candidate selection rule for Phase 1:
+
+```text
+exact priority 3, dictionary priority 2, rapidfuzz priority 1
+```
+
+Sort candidates by priority and score. Use confidence `0.98` for exact or dictionary winner; otherwise use the RapidFuzz score. Set `needs_review=True` when confidence is below `Settings.review_threshold`.
+
+- [ ] **Step 4: Implement Phase 1 matching service**
 
 Create `excel_matcher/services/__init__.py`:
 
@@ -1342,22 +1264,22 @@ Create `excel_matcher/services/__init__.py`:
 """Service orchestration layer."""
 ```
 
-Create `excel_matcher/services/matching_service.py` with `match_profiles(profiles, standard_fields, vector_store=None, enable_llm=True, settings=None)` that creates one `FusionMatcher` and returns a list of `FieldMappingResult`.
+Create `excel_matcher/services/matching_service.py` with `match_profiles(profiles, standard_fields, enable_embedding=False, enable_llm=False, settings=None)` that creates one `FusionMatcher` and returns a list of `FieldMappingResult`.
 
-- [ ] **Step 5: Run fusion tests**
+- [ ] **Step 5: Run Phase 1 fusion tests**
 
 Run: `pytest tests/test_services.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit fusion**
+- [ ] **Step 6: Commit Phase 1 fusion**
 
 ```bash
 git add excel_matcher/matcher/fusion_matcher.py excel_matcher/services tests/test_services.py
-git commit -m "feat: fuse staged field matching"
+git commit -m "feat: add phase 1 deterministic matching service"
 ```
 
-## Task 11: Workbook Analysis And Template Learning Services
+## Task 9: Workbook Analysis And Template Learning Services
 
 **Files:**
 - Create: `excel_matcher/services/workbook_service.py`
@@ -1425,7 +1347,7 @@ git add excel_matcher/services/workbook_service.py excel_matcher/services/templa
 git commit -m "feat: add workbook and template services"
 ```
 
-## Task 12: Generated Excel Samples And Accuracy Tests
+## Task 10: Generated Excel Samples And Accuracy Tests
 
 **Files:**
 - Create: `tests/sample_generator.py`
@@ -1475,7 +1397,7 @@ def test_base_field_matching_accuracy_on_generated_samples(tmp_path):
         sheet = workbook.sheets[0]
         header = detect_header(sheet)
         profiles = profile_columns(sheet, header)
-        results = match_profiles(profiles, fields, vector_store=None, enable_llm=False)
+        results = match_profiles(profiles, fields, enable_embedding=False, enable_llm=False)
         by_excel_field = {result.excel_field: result.target_field for result in results}
         for excel_field, expected_target in sample.expected_mappings.items():
             total += 1
@@ -1511,7 +1433,7 @@ git add tests/sample_generator.py tests/test_sample_accuracy.py excel_matcher/st
 git commit -m "test: add generated excel validation samples"
 ```
 
-## Task 13: FastAPI Interface
+## Task 11: FastAPI Interface
 
 **Files:**
 - Create: `excel_matcher/api/__init__.py`
@@ -1579,7 +1501,7 @@ git add excel_matcher/api tests/test_api.py
 git commit -m "feat: expose fastapi endpoints"
 ```
 
-## Task 14: Streamlit UI
+## Task 12: Streamlit UI
 
 **Files:**
 - Create: `excel_matcher/ui/__init__.py`
@@ -1619,17 +1541,17 @@ git add excel_matcher/ui README.md
 git commit -m "feat: add streamlit review interface"
 ```
 
-## Task 15: Full Verification And Polish
+## Task 13: Phase 1 Verification
 
 **Files:**
 - Verify: full repository
 - Test: full repository
 
-- [ ] **Step 1: Run full test suite**
+- [ ] **Step 1: Run Phase 1 test suite without semantic extras**
 
 Run: `pytest`
 
-Expected: PASS. If this fails, stop the task and create a focused follow-up fix task with the failing test name, the expected behavior, and the exact file paths involved.
+Expected: PASS using the Phase 1 install command `pip install -e ".[test]"`. The run must not download embedding models and must not invoke `codex exec`. If this fails, stop the task and create a focused follow-up fix task with the failing test name, the expected behavior, and the exact file paths involved.
 
 - [ ] **Step 2: Run import and entrypoint checks**
 
@@ -1648,6 +1570,335 @@ Run: `git status --short`
 Expected: only intentionally untracked local files remain, such as `.DS_Store` or original user-provided files that were not part of implementation commits.
 
 - [ ] **Step 4: Finish verification task**
+
+Run: `git status --short`
+
+Expected: no uncommitted implementation files. Do not create an empty commit for a verification-only pass.
+
+## Phase 2: Semantic Enhancement
+
+Phase 2 introduces the optional semantic stack. From this point forward, Embedding/FAISS and LLM stages may use both field names and data samples from `ColumnProfile.samples`. The Phase 1 deterministic tests must continue to pass with `enable_embedding=False` and `enable_llm=False`.
+
+## Task 14: Embedding And FAISS With Data-Content Semantic Text
+
+**Files:**
+- Create: `excel_matcher/vector/__init__.py`
+- Create: `excel_matcher/vector/faiss_store.py`
+- Create: `excel_matcher/matcher/embedding_matcher.py`
+- Create: `tests/test_semantic_stages.py`
+- Modify: `README.md`
+
+- [ ] **Step 1: Write embedding semantic tests**
+
+Create `tests/test_semantic_stages.py`:
+
+```python
+from excel_matcher.matcher.embedding_matcher import EmbeddingMatcher, profile_to_semantic_text
+from excel_matcher.models import ColumnProfile, DataType, FieldMatchCandidate, StageStatus, StandardField
+
+
+def test_profile_to_semantic_text_includes_field_name_type_and_samples():
+    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯", "阿里"])
+
+    text = profile_to_semantic_text(profile)
+
+    assert "购买方" in text
+    assert "TEXT" in text
+    assert "腾讯" in text
+    assert "阿里" in text
+
+
+def test_embedding_matcher_skips_when_vector_store_unavailable():
+    fields = [StandardField(key="customer_name", display_name="客户名称", domain="order", aliases=["购买方"])]
+    matcher = EmbeddingMatcher(fields=fields, vector_store=None)
+    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
+
+    result = matcher.match(profile)
+
+    assert result.status == StageStatus.SKIPPED
+    assert "vector store" in result.reason.lower()
+    assert result.candidates == []
+
+
+def test_embedding_matcher_uses_profile_semantic_text_for_query():
+    class FakeVectorStore:
+        def __init__(self):
+            self.query_text = ""
+
+        def is_available(self):
+            return True
+
+        def query(self, text: str, top_k: int):
+            self.query_text = text
+            return [FieldMatchCandidate(target_field="customer_name", score=0.91, source="embedding", reason="semantic")]
+
+    store = FakeVectorStore()
+    fields = [StandardField(key="customer_name", display_name="客户名称", domain="order", aliases=["购买方"])]
+    matcher = EmbeddingMatcher(fields=fields, vector_store=store, top_k=3)
+    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
+
+    result = matcher.match(profile)
+
+    assert result.status == StageStatus.COMPLETED
+    assert result.candidates[0].target_field == "customer_name"
+    assert "腾讯" in store.query_text
+```
+
+- [ ] **Step 2: Run embedding semantic tests to verify failure**
+
+Run: `pytest tests/test_semantic_stages.py::test_profile_to_semantic_text_includes_field_name_type_and_samples tests/test_semantic_stages.py::test_embedding_matcher_skips_when_vector_store_unavailable tests/test_semantic_stages.py::test_embedding_matcher_uses_profile_semantic_text_for_query -q`
+
+Expected: FAIL because `excel_matcher.matcher.embedding_matcher` does not exist.
+
+- [ ] **Step 3: Add Phase 2 dependency instructions**
+
+Update `README.md` with this text:
+
+```text
+## Phase 2 Semantic Setup
+
+Run `pip install -e ".[test,semantic]"`.
+
+The semantic stack loads `BAAI/bge-small-zh-v1.5` through sentence-transformers and stores FAISS files under `data/faiss/`.
+```
+
+- [ ] **Step 4: Implement vector package and embedding matcher**
+
+Create `excel_matcher/vector/__init__.py`:
+
+```python
+"""Vector search support for semantic matching."""
+```
+
+Create `excel_matcher/vector/faiss_store.py` with class `FaissVectorStore`. Import `faiss` and `SentenceTransformer` inside methods, not at module import time. Implement these exact methods:
+
+- `__init__(self, model_name: str, index_path, metadata_path)`: store paths, set `self.model`, `self.index`, and `self.metadata` to `None` or an empty list.
+- `is_available(self) -> bool`: return `True` only when both `self.index` and `self.metadata` are loaded.
+- `build(self, fields: list[StandardField]) -> None`: load `SentenceTransformer(self.model_name)`, embed each field key, display name, description, and alias, create a FAISS inner-product index over normalized vectors, and populate metadata entries with `field_key`, `domain`, `source_text`, and `source_type`.
+- `save(self) -> None`: create parent directories, write the FAISS index to `self.index_path`, and write metadata JSON to `self.metadata_path`.
+- `load(self) -> None`: read the FAISS index and metadata JSON from disk when both files exist.
+- `query(self, text: str, top_k: int) -> list[FieldMatchCandidate]`: embed the query text, search FAISS, and return candidates with source `embedding`.
+
+Create `excel_matcher/matcher/embedding_matcher.py` with:
+
+```python
+from excel_matcher.models import ColumnProfile, FieldMatchCandidate, StageResult, StageStatus, StandardField
+
+
+def profile_to_semantic_text(profile: ColumnProfile) -> str:
+    sample_text = " | ".join(str(sample) for sample in profile.samples[:5])
+    return f"field={profile.column_name}; type={profile.data_type.value}; samples={sample_text}"
+
+
+class EmbeddingMatcher:
+    def __init__(self, fields: list[StandardField], vector_store, top_k: int = 5):
+        self.fields = fields
+        self.vector_store = vector_store
+        self.top_k = top_k
+
+    def match(self, profile: ColumnProfile) -> StageResult:
+        if self.vector_store is None or not self.vector_store.is_available():
+            return StageResult(stage="embedding", status=StageStatus.SKIPPED, reason="vector store is not available")
+        candidates = self.vector_store.query(profile_to_semantic_text(profile), self.top_k)
+        return StageResult(stage="embedding", status=StageStatus.COMPLETED, candidates=candidates)
+```
+
+- [ ] **Step 5: Run embedding semantic tests**
+
+Run: `pytest tests/test_semantic_stages.py::test_profile_to_semantic_text_includes_field_name_type_and_samples tests/test_semantic_stages.py::test_embedding_matcher_skips_when_vector_store_unavailable tests/test_semantic_stages.py::test_embedding_matcher_uses_profile_semantic_text_for_query -q`
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit embedding semantic stage**
+
+```bash
+git add excel_matcher/vector excel_matcher/matcher/embedding_matcher.py tests/test_semantic_stages.py README.md
+git commit -m "feat: add phase 2 embedding semantic stage"
+```
+
+## Task 15: LLM Semantic Scoring With Data Samples
+
+**Files:**
+- Create: `excel_matcher/matcher/llm_matcher.py`
+- Modify: `tests/test_semantic_stages.py`
+
+- [ ] **Step 1: Add LLM semantic tests**
+
+Append to `tests/test_semantic_stages.py`:
+
+```python
+from excel_matcher.matcher.llm_matcher import CodexExecLLMMatcher
+
+
+def test_llm_matcher_skips_without_candidates():
+    matcher = CodexExecLLMMatcher(enabled=True)
+    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
+
+    result = matcher.match(profile, candidates=[])
+
+    assert result.status == StageStatus.SKIPPED
+    assert "candidate" in result.reason.lower()
+
+
+def test_llm_matcher_prompt_includes_data_samples_and_parses_json():
+    captured = {}
+
+    def runner(prompt: str, timeout: int) -> str:
+        captured["prompt"] = prompt
+        captured["timeout"] = timeout
+        return '{"target_field":"customer_name","semantic_score":0.96,"reason":"购买方和样例腾讯表示客户"}'
+
+    matcher = CodexExecLLMMatcher(enabled=True, runner=runner, timeout_seconds=5)
+    profile = ColumnProfile(column_name="购买方", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
+    candidates = [FieldMatchCandidate(target_field="customer_name", score=0.88, source="embedding")]
+
+    result = matcher.match(profile, candidates=candidates)
+
+    assert "购买方" in captured["prompt"]
+    assert "腾讯" in captured["prompt"]
+    assert "customer_name" in captured["prompt"]
+    assert captured["timeout"] == 5
+    assert result.status == StageStatus.COMPLETED
+    assert result.candidates[0].target_field == "customer_name"
+    assert result.candidates[0].score == 0.96
+```
+
+- [ ] **Step 2: Run LLM semantic tests to verify failure**
+
+Run: `pytest tests/test_semantic_stages.py::test_llm_matcher_skips_without_candidates tests/test_semantic_stages.py::test_llm_matcher_prompt_includes_data_samples_and_parses_json -q`
+
+Expected: FAIL because `excel_matcher.matcher.llm_matcher` does not exist.
+
+- [ ] **Step 3: Implement LLM matcher**
+
+Create `excel_matcher/matcher/llm_matcher.py` with public class `CodexExecLLMMatcher`. Its constructor signature must be `__init__(self, enabled: bool = True, timeout_seconds: int = 60, runner=None)`. Its matching method signature must be `match(self, profile: ColumnProfile, candidates: list[FieldMatchCandidate]) -> StageResult`.
+
+Rules:
+
+- If `enabled=False`, return `StageResult(stage="llm", status=StageStatus.SKIPPED, reason="llm semantic scoring is disabled")`.
+- If `candidates` is empty, return skipped with reason `llm semantic scoring requires candidates`.
+- Prompt must include profile field name, data type, up to five sample values, and candidate target fields.
+- Default runner calls `subprocess.run(["codex", "exec", prompt], capture_output=True, text=True, timeout=timeout_seconds, check=False)`.
+- Non-zero exit, timeout, or invalid JSON returns skipped with a reason starting with `codex exec`.
+- Valid JSON must contain `target_field` and `semantic_score`; clamp score to `0.0-1.0`; return a completed `StageResult` with a candidate source of `llm`.
+
+- [ ] **Step 4: Run LLM semantic tests**
+
+Run: `pytest tests/test_semantic_stages.py::test_llm_matcher_skips_without_candidates tests/test_semantic_stages.py::test_llm_matcher_prompt_includes_data_samples_and_parses_json -q`
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit LLM semantic stage**
+
+```bash
+git add excel_matcher/matcher/llm_matcher.py tests/test_semantic_stages.py
+git commit -m "feat: add phase 2 llm semantic scoring"
+```
+
+## Task 16: Upgrade Fusion And Services For Phase 2 Semantic Stages
+
+**Files:**
+- Modify: `excel_matcher/matcher/fusion_matcher.py`
+- Modify: `excel_matcher/services/matching_service.py`
+- Modify: `tests/test_services.py`
+
+- [ ] **Step 1: Add Phase 2 fusion tests**
+
+Append to `tests/test_services.py`:
+
+```python
+from excel_matcher.models import FieldMatchCandidate, StageResult
+
+
+class FakeEmbeddingMatcher:
+    def match(self, profile):
+        return StageResult(
+            stage="embedding",
+            status=StageStatus.COMPLETED,
+            candidates=[FieldMatchCandidate(target_field="customer_name", score=0.91, source="embedding")],
+        )
+
+
+class FakeLLMMatcher:
+    def match(self, profile, candidates):
+        assert profile.samples == ["腾讯"]
+        assert candidates[0].target_field == "customer_name"
+        return StageResult(
+            stage="llm",
+            status=StageStatus.COMPLETED,
+            candidates=[FieldMatchCandidate(target_field="customer_name", score=0.96, source="llm")],
+        )
+
+
+def test_phase2_fusion_calls_embedding_then_llm_with_profile_samples():
+    matcher = FusionMatcher(
+        standard_fields=FIELDS,
+        enable_embedding=True,
+        enable_llm=True,
+        embedding_matcher=FakeEmbeddingMatcher(),
+        llm_matcher=FakeLLMMatcher(),
+    )
+    profile = ColumnProfile(column_name="购货单位", column_index=1, data_type=DataType.TEXT, samples=["腾讯"])
+
+    result = matcher.match(profile)
+
+    assert [stage.stage for stage in result.stage_results] == ["exact", "dictionary", "rapidfuzz", "embedding", "llm"]
+    assert result.target_field == "customer_name"
+    assert result.confidence == 0.96
+```
+
+- [ ] **Step 2: Run Phase 2 fusion tests to verify failure**
+
+Run: `pytest tests/test_services.py::test_phase2_fusion_calls_embedding_then_llm_with_profile_samples -q`
+
+Expected: FAIL because Phase 1 `FusionMatcher` does not accept injected semantic matchers.
+
+- [ ] **Step 3: Modify fusion matcher**
+
+Update `FusionMatcher.__init__` to accept `enable_embedding`, `enable_llm`, `embedding_matcher=None`, and `llm_matcher=None`. When `enable_embedding=True` and `embedding_matcher` exists, call `embedding_matcher.match(profile)` after RapidFuzz. When `enable_llm=True`, call `llm_matcher.match(profile, semantic_candidates)` after embedding, where `semantic_candidates` are the embedding candidates when present, otherwise the best candidates from earlier stages. Keep the stage order fixed. Ranking priority becomes `exact=5`, `dictionary=4`, `llm=3`, `embedding=2`, `rapidfuzz=1`.
+
+- [ ] **Step 4: Modify matching service**
+
+Update `match_profiles` to accept `enable_embedding`, `enable_llm`, `embedding_matcher=None`, and `llm_matcher=None`, pass them into `FusionMatcher`, and keep Phase 1 defaults as `False`.
+
+- [ ] **Step 5: Run services tests**
+
+Run: `pytest tests/test_services.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit semantic fusion upgrade**
+
+```bash
+git add excel_matcher/matcher/fusion_matcher.py excel_matcher/services/matching_service.py tests/test_services.py
+git commit -m "feat: enable phase 2 semantic fusion"
+```
+
+## Task 17: Phase 2 Verification
+
+**Files:**
+- Verify: full repository
+- Test: full repository
+
+- [ ] **Step 1: Run deterministic suite without semantic dependencies**
+
+Run: `pytest`
+
+Expected: PASS. Phase 1 tests must still pass with semantic features disabled.
+
+- [ ] **Step 2: Run compile checks**
+
+Run: `python -m compileall excel_matcher tests`
+
+Expected: all files compile.
+
+- [ ] **Step 3: Run semantic-specific tests**
+
+Run: `pytest tests/test_semantic_stages.py tests/test_services.py::test_phase2_fusion_calls_embedding_then_llm_with_profile_samples -q`
+
+Expected: PASS. These tests use fakes and must not call external model downloads or `codex exec`.
+
+- [ ] **Step 4: Check git status**
 
 Run: `git status --short`
 
