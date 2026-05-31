@@ -27,6 +27,14 @@ Phase 2 semantic dependencies:
 .venv/bin/uvicorn excel_matcher.api.app:app --reload
 ```
 
+API endpoints:
+
+- `GET /health`
+- `GET /fields`
+- `POST /workbooks/analyze`
+- `POST /fields/match`
+- `POST /templates`
+
 ## Run UI
 
 ```bash
